@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+project_*/
+old_projects/
+*.mp4
+*.mp3
+*.wav
+*.png
+*.jpg
+model_cache/

@@ -1,0 +1,47 @@
+services:
+  video-api:
+    build:
+      context: ./video_api
+      dockerfile: Dockerfile
+    volumes:
+      - model_cache:/app/model_cache
+      - shared_videos:/app/outputs
+    environment:
+      - VIDEO_MODEL=${VIDEO_MODEL:-wan2.2-14b}
+      - HF_HOME=/app/model_cache
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    ports:
+      - "8000:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; r=urllib.request.urlopen('http://localhost:8000/health'); import json; d=json.loads(r.read()); exit(0 if d['status']=='ready' else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 30
+      start_period: 600s
+    restart: unless-stopped
+
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipeline
+    volumes:
+      - shared_videos:/app/outputs
+      - ./projects:/app/projects
+    environment:
+      - WAN2_API_URL=http://video-api:8000
+    env_file:
+      - .env
+    depends_on:
+      video-api:
+        condition: service_healthy
+
+volumes:
+  model_cache:
+  shared_videos:
