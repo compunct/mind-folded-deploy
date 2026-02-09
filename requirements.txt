@@ -1,9 +1,0 @@
-openai
-replicate
-litellm
-python-dotenv
-Pillow
-moviepy
-pydub
-requests
-numpy

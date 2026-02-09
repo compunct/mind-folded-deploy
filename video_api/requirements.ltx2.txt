@@ -1,0 +1,15 @@
+torch>=2.7.0
+torchaudio
+diffusers>=0.37.0
+transformers>=4.57.0
+accelerate
+safetensors
+sentencepiece
+huggingface_hub
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+imageio
+imageio-ffmpeg
+av
+numpy
+pillow

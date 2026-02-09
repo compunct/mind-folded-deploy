@@ -2,12 +2,32 @@
 set -euo pipefail
 
 echo "============================================"
-echo "  Deploy Mind Folded - Video Pipeline"
+echo "  Video API Server - Deploy"
 echo "============================================"
 echo ""
 
+# Parse model argument
+MODEL="${1:-}"
+if [ -z "$MODEL" ]; then
+    echo "Usage: ./deploy.sh <wan|ltx>"
+    echo ""
+    echo "  wan  - WAN 2.2 14B (requires ~60GB RAM, 32GB VRAM)"
+    echo "  ltx  - LTX-2 19B Distilled FP8 (requires ~40GB RAM, 24GB VRAM)"
+    echo ""
+    exit 1
+fi
+
+case "$MODEL" in
+    wan) SERVICE="video-api-wan"; PROFILE="wan" ;;
+    ltx) SERVICE="video-api-ltx"; PROFILE="ltx" ;;
+    *)
+        echo "ERROR: Unknown model '$MODEL'. Use 'wan' or 'ltx'."
+        exit 1
+        ;;
+esac
+
 # Check for NVIDIA Container Toolkit
-echo "[1/4] Checking NVIDIA GPU support..."
+echo "[1/3] Checking NVIDIA GPU support..."
 if ! command -v nvidia-smi &> /dev/null; then
     echo "ERROR: nvidia-smi not found. Install NVIDIA drivers first."
     exit 1
@@ -30,34 +50,21 @@ if ! docker info 2>/dev/null | grep -q "Runtimes.*nvidia"; then
     fi
 fi
 
-# Check for .env file
-echo "[2/4] Checking environment..."
-if [ ! -f .env ]; then
-    echo "ERROR: .env file not found. Copy .env.example and fill in your API keys:"
-    echo "  cp .env.example .env"
-    echo "  nano .env"
-    exit 1
-fi
-
-echo ".env file found."
+# Build container
+echo "[2/3] Building $SERVICE container..."
+docker compose --profile "$PROFILE" build "$SERVICE"
 echo ""
 
-# Build containers
-echo "[3/4] Building containers..."
-docker compose build
+# Start and wait for health
+echo "[3/3] Starting $SERVICE..."
+echo "This will download model weights on first run. Be patient."
 echo ""
+docker compose --profile "$PROFILE" up -d "$SERVICE"
 
-# Start video-api and wait for health
-echo "[4/4] Starting video-api service..."
-echo "This will download model weights on first run (~28GB). Be patient."
-echo ""
-docker compose up -d video-api
-
-echo "Waiting for video-api to become healthy..."
+echo "Waiting for video API to become healthy..."
 echo "(Model loading can take 5-15 minutes on first run)"
 echo ""
 
-# Poll health endpoint
 MAX_WAIT=900
 ELAPSED=0
 INTERVAL=10
@@ -69,13 +76,10 @@ while [ $ELAPSED -lt $MAX_WAIT ]; do
         echo "Video API is READY!"
         echo ""
         echo "============================================"
-        echo "  Deployment Complete"
+        echo "  Deployment Complete ($SERVICE)"
         echo "============================================"
         echo ""
         echo "Usage:"
-        echo "  # Run the full pipeline:"
-        echo "  docker compose run pipeline"
-        echo ""
         echo "  # Test video generation:"
         echo "  curl -X POST http://localhost:8000/generate \\"
         echo "    -H 'Content-Type: application/json' \\"
@@ -85,10 +89,10 @@ while [ $ELAPSED -lt $MAX_WAIT ]; do
         echo "  curl http://localhost:8000/health"
         echo ""
         echo "  # View logs:"
-        echo "  docker compose logs -f video-api"
+        echo "  docker compose --profile $PROFILE logs -f $SERVICE"
         echo ""
-        echo "  # Stop everything:"
-        echo "  docker compose down"
+        echo "  # Stop:"
+        echo "  docker compose --profile $PROFILE down"
         echo ""
         exit 0
     fi
@@ -99,5 +103,5 @@ done
 
 echo ""
 echo "ERROR: Video API did not become ready within ${MAX_WAIT}s."
-echo "Check logs: docker compose logs video-api"
+echo "Check logs: docker compose --profile $PROFILE logs $SERVICE"
 exit 1

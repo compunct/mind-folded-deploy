@@ -33,10 +33,10 @@ MODEL_REGISTRY = {
         "load": "video_api.models.wan22:load",
         "generate": "video_api.models.wan22:generate",
     },
-    # Future models register here:
-    # "hunyuanvideo": { "load": "video_api.models.hunyuan:load", "generate": "video_api.models.hunyuan:generate" },
-    # "skyreels": { ... },
-    # "ltx2": { ... },
+    "ltx2-distilled": {
+        "load": "video_api.models.ltx2:load",
+        "generate": "video_api.models.ltx2:generate",
+    },
 }
 
 # ---------------------------------------------------------------------------

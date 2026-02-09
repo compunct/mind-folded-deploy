@@ -1,15 +1,17 @@
-FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04
+FROM nvidia/cuda:12.8.1-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV HF_HOME=/app/model_cache
 ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-# System dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# System dependencies + deadsnakes PPA for Python 3.12
+RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && apt-get install -y --no-install-recommends \
     python3.12 \
     python3.12-venv \
-    python3-pip \
+    python3.12-dev \
     ffmpeg \
     git \
     && rm -rf /var/lib/apt/lists/*
@@ -20,10 +22,11 @@ RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 &
 
 WORKDIR /app
 
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Install pip via ensurepip and install Python dependencies
+COPY requirements.wan22.txt .
+RUN python -m ensurepip --upgrade && \
+    python -m pip install --no-cache-dir --upgrade pip && \
+    python -m pip install --no-cache-dir -r requirements.wan22.txt
 
 # Copy application code
 COPY . /app/video_api/
