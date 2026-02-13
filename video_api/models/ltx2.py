@@ -31,8 +31,8 @@ def load():
         torch_dtype=torch.bfloat16,
     )
 
-    print("[LTX-2] Enabling sequential CPU offload...")
-    pipe.enable_sequential_cpu_offload(device="cuda")
+    print("[LTX-2] Enabling model CPU offload...")
+    pipe.enable_model_cpu_offload(device="cuda")
 
     print("[LTX-2] Model loaded successfully.")
     return pipe

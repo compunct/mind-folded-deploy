@@ -28,6 +28,7 @@ services:
     restart: unless-stopped
 
   video-api-ltx:
+    image: compunct/video-api:ltx2
     build:
       context: ./video_api
       dockerfile: Dockerfile.ltx2

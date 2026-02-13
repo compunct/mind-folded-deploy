@@ -3,6 +3,9 @@ Local video generation FastAPI server.
 
 Pluggable model backend selected via VIDEO_MODEL environment variable.
 Loads the model into GPU memory once at startup and serves generation requests.
+
+Jobs are processed asynchronously — POST /generate returns immediately with a
+job_id, and clients poll GET /jobs/{job_id} for status.
 """
 
 import os
@@ -47,6 +50,7 @@ app = FastAPI(title="Video Generation API")
 pipe = None
 model_status = "loading"  # "loading" | "ready" | "error"
 generation_lock = threading.Lock()
+jobs = {}  # job_id -> {status, result, error, request, created_at}
 
 
 def _import_func(dotted_path: str):
@@ -102,12 +106,20 @@ class GenerateRequest(BaseModel):
     seed: Optional[int] = None
 
 
-class GenerateResponse(BaseModel):
-    video_url: str
-    filename: str
-    generation_time_seconds: float
-    model: str
-    parameters: dict
+class JobResponse(BaseModel):
+    job_id: str
+    status: str
+
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: str  # queued | running | completed | failed
+    video_url: Optional[str] = None
+    filename: Optional[str] = None
+    generation_time_seconds: Optional[float] = None
+    model: Optional[str] = None
+    parameters: Optional[dict] = None
+    error: Optional[str] = None
 
 
 class HealthResponse(BaseModel):
@@ -124,7 +136,7 @@ def health():
     return HealthResponse(status=model_status, model=VIDEO_MODEL)
 
 
-@app.post("/generate", response_model=GenerateResponse)
+@app.post("/generate", response_model=JobResponse)
 def generate_video(req: GenerateRequest):
     if model_status != "ready":
         raise HTTPException(
@@ -133,58 +145,39 @@ def generate_video(req: GenerateRequest):
                    f"Check /health and wait for status 'ready'."
         )
 
-    entry = MODEL_REGISTRY[VIDEO_MODEL]
-    generate_fn = _import_func(entry["generate"])
+    job_id = uuid.uuid4().hex[:12]
+    jobs[job_id] = {
+        "status": "queued",
+        "result": None,
+        "error": None,
+        "request": req,
+        "created_at": time.time(),
+    }
 
-    # Only one generation at a time (GPU bottleneck)
-    acquired = generation_lock.acquire(timeout=5)
-    if not acquired:
-        raise HTTPException(
-            status_code=429,
-            detail="Another generation is in progress. Try again later."
-        )
+    thread = threading.Thread(target=_run_job, args=(job_id,), daemon=True)
+    thread.start()
 
-    try:
-        frames, elapsed = generate_fn(
-            pipe,
-            prompt=req.prompt,
-            height=req.height,
-            width=req.width,
-            num_frames=req.num_frames,
-            fps=req.fps,
-            num_inference_steps=req.num_inference_steps,
-            guidance_scale=req.guidance_scale,
-            negative_prompt=req.negative_prompt,
-            seed=req.seed,
-        )
+    return JobResponse(job_id=job_id, status="queued")
 
-        # Export frames to MP4
-        filename = f"{uuid.uuid4().hex}.mp4"
-        output_path = OUTPUT_DIR / filename
-        _export_frames_to_mp4(frames, output_path, req.fps)
 
-        video_url = f"/videos/{filename}"
+@app.get("/jobs/{job_id}", response_model=JobStatusResponse)
+def get_job_status(job_id: str):
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
 
-        return GenerateResponse(
-            video_url=video_url,
-            filename=filename,
-            generation_time_seconds=round(elapsed, 2),
-            model=VIDEO_MODEL,
-            parameters={
-                "prompt": req.prompt,
-                "height": req.height,
-                "width": req.width,
-                "num_frames": req.num_frames,
-                "fps": req.fps,
-                "num_inference_steps": req.num_inference_steps,
-                "guidance_scale": req.guidance_scale,
-                "seed": req.seed,
-            },
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        generation_lock.release()
+    job = jobs[job_id]
+    resp = JobStatusResponse(job_id=job_id, status=job["status"])
+
+    if job["status"] == "completed" and job["result"]:
+        resp.video_url = job["result"]["video_url"]
+        resp.filename = job["result"]["filename"]
+        resp.generation_time_seconds = job["result"]["generation_time_seconds"]
+        resp.model = job["result"]["model"]
+        resp.parameters = job["result"]["parameters"]
+    elif job["status"] == "failed":
+        resp.error = job["error"]
+
+    return resp
 
 
 @app.get("/videos/{filename}")
@@ -193,6 +186,65 @@ def serve_video(filename: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Video not found")
     return FileResponse(str(file_path), media_type="video/mp4")
+
+
+# ---------------------------------------------------------------------------
+# Background job worker
+# ---------------------------------------------------------------------------
+
+def _run_job(job_id: str):
+    """Run video generation in a background thread."""
+    job = jobs[job_id]
+    req = job["request"]
+
+    entry = MODEL_REGISTRY[VIDEO_MODEL]
+    generate_fn = _import_func(entry["generate"])
+
+    # Block until the GPU is free — job stays "queued" while waiting
+    with generation_lock:
+        job["status"] = "running"
+        print(f"[Server] Job {job_id} running: {req.prompt!r}")
+
+        try:
+            frames, elapsed = generate_fn(
+                pipe,
+                prompt=req.prompt,
+                height=req.height,
+                width=req.width,
+                num_frames=req.num_frames,
+                fps=req.fps,
+                num_inference_steps=req.num_inference_steps,
+                guidance_scale=req.guidance_scale,
+                negative_prompt=req.negative_prompt,
+                seed=req.seed,
+            )
+
+            filename = f"{uuid.uuid4().hex}.mp4"
+            output_path = OUTPUT_DIR / filename
+            _export_frames_to_mp4(frames, output_path, req.fps)
+
+            job["status"] = "completed"
+            job["result"] = {
+                "video_url": f"/videos/{filename}",
+                "filename": filename,
+                "generation_time_seconds": round(elapsed, 2),
+                "model": VIDEO_MODEL,
+                "parameters": {
+                    "prompt": req.prompt,
+                    "height": req.height,
+                    "width": req.width,
+                    "num_frames": req.num_frames,
+                    "fps": req.fps,
+                    "num_inference_steps": req.num_inference_steps,
+                    "guidance_scale": req.guidance_scale,
+                    "seed": req.seed,
+                },
+            }
+            print(f"[Server] Job {job_id} completed in {elapsed:.1f}s")
+        except Exception as e:
+            job["status"] = "failed"
+            job["error"] = str(e)
+            print(f"[Server] Job {job_id} failed: {e}")
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,53 @@
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV HF_HOME=/workspace/model_cache
+ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+# System dependencies + Python 3.12 + SSH + dev tools
+RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    ffmpeg \
+    git \
+    openssh-server \
+    vim \
+    nano \
+    curl \
+    htop \
+    rsync \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/run/sshd
+
+# Use python3.12 as default
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 && \
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
+
+# Allow root login via SSH (RunPod convention)
+RUN sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+
+WORKDIR /app
+
+# Install pip and Python dependencies
+COPY requirements.ltx2.txt .
+RUN python -m ensurepip --upgrade && \
+    python -m pip install --no-cache-dir --upgrade pip && \
+    python -m pip install --no-cache-dir -r requirements.ltx2.txt
+
+RUN mkdir -p /app/outputs
+
+# Copy application code
+COPY . /app/video_api/
+
+# Copy startup script
+COPY start_runpod.sh /start.sh
+RUN chmod +x /start.sh
+
+EXPOSE 8000 22
+
+CMD ["/start.sh"]
