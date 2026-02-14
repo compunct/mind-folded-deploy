@@ -94,8 +94,12 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
     print(f"[LTX-2] Generating: {width}x{height}, {num_frames} frames, "
           f"{num_inference_steps} steps, guidance={guidance_scale}")
 
+    # Use pipeline's built-in decode for short videos (< 750 frames),
+    # chunked latent decode only for long videos that exceed 32-bit index limit.
+    use_chunked = num_frames > 750
+
     start = time.time()
-    latents, audio = pipe(
+    result, audio = pipe(
         prompt=prompt,
         negative_prompt=negative_prompt,
         width=width,
@@ -106,26 +110,32 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
         sigmas=DISTILLED_SIGMA_VALUES,
         guidance_scale=guidance_scale,
         generator=generator,
-        output_type="latent",
+        output_type="latent" if use_chunked else "np",
         return_dict=False,
     )
     diff_elapsed = time.time() - start
-    print(f"[LTX-2] Diffusion complete in {diff_elapsed:.1f}s, decoding frames...")
 
-    # output_type="latent" returns normalized latents.
-    # Unpack only if still in packed 3D format; skip if already 5D.
-    print(f"[LTX-2] Latent shape: {latents.shape} (ndim={latents.ndim})")
-    if latents.ndim == 3:
-        latents = pipe._unpack_latents(latents, num_frames, height, width)
-    latents = pipe._denormalize_latents(
-        latents, pipe.vae.latents_mean, pipe.vae.latents_std,
-        pipe.vae.config.scaling_factor,
-    )
-    latents = latents.to(pipe.vae.dtype)
-    frames = _decode_latents_chunked(pipe, latents, chunk_frames=8)
+    if use_chunked:
+        print(f"[LTX-2] Diffusion complete in {diff_elapsed:.1f}s, chunked decode...")
+        latents = result
+        print(f"[LTX-2] Latent shape: {latents.shape}, range: [{latents.min():.3f}, {latents.max():.3f}]")
+        if latents.ndim == 3:
+            latents = pipe._unpack_latents(latents, num_frames, height, width)
+        latents = pipe._denormalize_latents(
+            latents, pipe.vae.latents_mean, pipe.vae.latents_std,
+            pipe.vae.config.scaling_factor,
+        )
+        print(f"[LTX-2] After denorm range: [{latents.min():.3f}, {latents.max():.3f}]")
+        latents = latents.to(pipe.vae.dtype)
+        frames = _decode_latents_chunked(pipe, latents, chunk_frames=8)
+    else:
+        print(f"[LTX-2] Generation complete in {diff_elapsed:.1f}s")
+        video_np = result[0]
+        video_uint8 = (video_np * 255).clip(0, 255).astype(np.uint8)
+        frames = [Image.fromarray(frame) for frame in video_uint8]
 
     elapsed = time.time() - start
-    print(f"[LTX-2] Total generation complete in {elapsed:.1f}s ({len(frames)} frames)")
+    print(f"[LTX-2] Total: {elapsed:.1f}s ({len(frames)} frames)")
 
     return frames, elapsed
 
@@ -153,6 +163,8 @@ def _decode_latents_chunked(pipe, latents, chunk_frames=8):
             decoded = vae.decode(chunk, return_dict=False)[0]
         # decoded shape: (batch, 3, temporal_frames, H, W) — float tensor
         video_chunk = decoded[0]  # (3, T, H, W)
+        if i == 0:
+            print(f"[LTX-2] VAE decode output range: [{video_chunk.min():.3f}, {video_chunk.max():.3f}]")
         video_chunk = video_chunk.permute(1, 2, 3, 0)  # (T, H, W, 3)
         video_chunk = (video_chunk.float() / 2 + 0.5).clamp(0, 1).cpu().numpy()
         video_uint8 = (video_chunk * 255).astype(np.uint8)
