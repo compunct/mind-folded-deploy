@@ -31,8 +31,15 @@ def load():
         torch_dtype=torch.bfloat16,
     )
 
-    print("[LTX-2] Enabling model CPU offload...")
-    pipe.enable_model_cpu_offload(device="cuda")
+    print("[LTX-2] Enabling sequential CPU offload...")
+    pipe.enable_sequential_cpu_offload(device="cuda")
+
+    # Decode VAE in chunks to avoid 32-bit tensor index overflow on long videos
+    print("[LTX-2] Enabling VAE tiling for long video support...")
+    pipe.vae.enable_tiling(
+        tile_sample_min_num_frames=16,
+        tile_sample_stride_num_frames=8,
+    )
 
     print("[LTX-2] Model loaded successfully.")
     return pipe
