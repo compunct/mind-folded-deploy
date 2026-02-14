@@ -95,7 +95,7 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
           f"{num_inference_steps} steps, guidance={guidance_scale}")
 
     start = time.time()
-    video, audio = pipe(
+    latents, audio = pipe(
         prompt=prompt,
         negative_prompt=negative_prompt,
         width=width,
@@ -106,15 +106,51 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
         sigmas=DISTILLED_SIGMA_VALUES,
         guidance_scale=guidance_scale,
         generator=generator,
-        output_type="np",
+        output_type="latent",
         return_dict=False,
     )
-    elapsed = time.time() - start
-    print(f"[LTX-2] Generation complete in {elapsed:.1f}s")
+    diff_elapsed = time.time() - start
+    print(f"[LTX-2] Diffusion complete in {diff_elapsed:.1f}s, decoding frames...")
 
-    # Convert numpy [batch, frames, H, W, 3] float [0,1] → list of PIL Images
-    video_np = video[0]  # first batch item: (num_frames, H, W, 3)
-    video_uint8 = (video_np * 255).clip(0, 255).astype(np.uint8)
-    frames = [Image.fromarray(frame) for frame in video_uint8]
+    # Decode latents → PIL frames in chunks to avoid 32-bit index overflow.
+    # The pipeline's internal assembly fails when total pixels > 2^31,
+    # so we decode the latent tensor in temporal slices ourselves.
+    frames = _decode_latents_chunked(pipe, latents, chunk_frames=8)
+
+    elapsed = time.time() - start
+    print(f"[LTX-2] Total generation complete in {elapsed:.1f}s ({len(frames)} frames)")
 
     return frames, elapsed
+
+
+def _decode_latents_chunked(pipe, latents, chunk_frames=8):
+    """Decode latent tensor to PIL images in temporal chunks.
+
+    The VAE decodes the full latent at once which can exceed PyTorch's
+    32-bit index limit for long videos.  This function slices along the
+    temporal dimension of the latent, decodes each slice, and converts
+    to PIL images incrementally.
+    """
+    import numpy as np
+    from PIL import Image
+
+    vae = pipe.vae
+    # latents shape: (batch, channels, num_latent_frames, h, w)
+    # LTX-2 VAE temporal compression is 8x, so latent frames = ceil(num_frames/8)
+    num_latent_frames = latents.shape[2]
+
+    all_frames = []
+    for i in range(0, num_latent_frames, chunk_frames):
+        chunk = latents[:, :, i:i + chunk_frames, :, :]
+        with torch.no_grad():
+            decoded = vae.decode(chunk, return_dict=False)[0]
+        # decoded shape: (batch, 3, temporal_frames, H, W) — float tensor
+        video_chunk = decoded[0]  # (3, T, H, W)
+        video_chunk = video_chunk.permute(1, 2, 3, 0)  # (T, H, W, 3)
+        video_chunk = video_chunk.float().clamp(0, 1).cpu().numpy()
+        video_uint8 = (video_chunk * 255).astype(np.uint8)
+        for frame in video_uint8:
+            all_frames.append(Image.fromarray(frame))
+        print(f"[LTX-2] Decoded frames {len(all_frames)}...")
+
+    return all_frames
