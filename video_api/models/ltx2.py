@@ -154,7 +154,7 @@ def _decode_latents_chunked(pipe, latents, chunk_frames=8):
         # decoded shape: (batch, 3, temporal_frames, H, W) — float tensor
         video_chunk = decoded[0]  # (3, T, H, W)
         video_chunk = video_chunk.permute(1, 2, 3, 0)  # (T, H, W, 3)
-        video_chunk = video_chunk.float().clamp(0, 1).cpu().numpy()
+        video_chunk = (video_chunk.float() / 2 + 0.5).clamp(0, 1).cpu().numpy()
         video_uint8 = (video_chunk * 255).astype(np.uint8)
         for frame in video_uint8:
             all_frames.append(Image.fromarray(frame))
