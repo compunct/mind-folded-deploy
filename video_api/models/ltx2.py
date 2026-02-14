@@ -96,7 +96,8 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
 
     # Use pipeline's built-in decode for short videos (< 750 frames),
     # chunked latent decode only for long videos that exceed 32-bit index limit.
-    use_chunked = num_frames > 750
+    # DEBUG: temporarily set to 50 for fast iteration on chunked decode
+    use_chunked = num_frames > 50
 
     start = time.time()
     result, audio = pipe(
@@ -121,11 +122,7 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
         print(f"[LTX-2] Latent shape: {latents.shape}, range: [{latents.min():.3f}, {latents.max():.3f}]")
         if latents.ndim == 3:
             latents = pipe._unpack_latents(latents, num_frames, height, width)
-        latents = pipe._denormalize_latents(
-            latents, pipe.vae.latents_mean, pipe.vae.latents_std,
-            pipe.vae.config.scaling_factor,
-        )
-        print(f"[LTX-2] After denorm range: [{latents.min():.3f}, {latents.max():.3f}]")
+        # Skip denormalization — latents appear to already be in VAE-ready space
         latents = latents.to(pipe.vae.dtype)
         frames = _decode_latents_chunked(pipe, latents, chunk_frames=8)
     else:
