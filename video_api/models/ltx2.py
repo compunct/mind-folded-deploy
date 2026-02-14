@@ -96,8 +96,7 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
 
     # Use pipeline's built-in decode for short videos (< 750 frames),
     # chunked latent decode only for long videos that exceed 32-bit index limit.
-    # DEBUG: temporarily set to 50 for fast iteration on chunked decode
-    use_chunked = num_frames > 50
+    use_chunked = num_frames > 750
 
     start = time.time()
     result, audio = pipe(
@@ -119,10 +118,8 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
     if use_chunked:
         print(f"[LTX-2] Diffusion complete in {diff_elapsed:.1f}s, chunked decode...")
         latents = result
-        print(f"[LTX-2] Latent shape: {latents.shape}, range: [{latents.min():.3f}, {latents.max():.3f}]")
         if latents.ndim == 3:
             latents = pipe._unpack_latents(latents, num_frames, height, width)
-        # Skip denormalization — latents appear to already be in VAE-ready space
         latents = latents.to(pipe.vae.dtype)
         frames = _decode_latents_chunked(pipe, latents, chunk_frames=8)
     else:
@@ -160,8 +157,6 @@ def _decode_latents_chunked(pipe, latents, chunk_frames=8):
             decoded = vae.decode(chunk, return_dict=False)[0]
         # decoded shape: (batch, 3, temporal_frames, H, W) — float tensor
         video_chunk = decoded[0]  # (3, T, H, W)
-        if i == 0:
-            print(f"[LTX-2] VAE decode output range: [{video_chunk.min():.3f}, {video_chunk.max():.3f}]")
         video_chunk = video_chunk.permute(1, 2, 3, 0)  # (T, H, W, 3)
         video_chunk = (video_chunk.float() / 2 + 0.5).clamp(0, 1).cpu().numpy()
         video_uint8 = (video_chunk * 255).astype(np.uint8)
