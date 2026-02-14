@@ -112,10 +112,11 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
     diff_elapsed = time.time() - start
     print(f"[LTX-2] Diffusion complete in {diff_elapsed:.1f}s, decoding frames...")
 
-    # The pipeline returns packed, normalized latents when output_type="latent".
-    # We must unpack and denormalize before VAE decode, then decode in chunks
-    # to avoid PyTorch's 32-bit index overflow on long videos.
-    latents = pipe._unpack_latents(latents, num_frames, height, width)
+    # output_type="latent" returns normalized latents.
+    # Unpack only if still in packed 3D format; skip if already 5D.
+    print(f"[LTX-2] Latent shape: {latents.shape} (ndim={latents.ndim})")
+    if latents.ndim == 3:
+        latents = pipe._unpack_latents(latents, num_frames, height, width)
     latents = pipe._denormalize_latents(
         latents, pipe.vae.latents_mean, pipe.vae.latents_std,
         pipe.vae.config.scaling_factor,
