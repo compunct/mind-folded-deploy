@@ -112,9 +112,15 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
     diff_elapsed = time.time() - start
     print(f"[LTX-2] Diffusion complete in {diff_elapsed:.1f}s, decoding frames...")
 
-    # Decode latents → PIL frames in chunks to avoid 32-bit index overflow.
-    # The pipeline's internal assembly fails when total pixels > 2^31,
-    # so we decode the latent tensor in temporal slices ourselves.
+    # The pipeline returns packed, normalized latents when output_type="latent".
+    # We must unpack and denormalize before VAE decode, then decode in chunks
+    # to avoid PyTorch's 32-bit index overflow on long videos.
+    latents = pipe._unpack_latents(latents, num_frames, height, width)
+    latents = pipe._denormalize_latents(
+        latents, pipe.vae.latents_mean, pipe.vae.latents_std,
+        pipe.vae.config.scaling_factor,
+    )
+    latents = latents.to(pipe.vae.dtype)
     frames = _decode_latents_chunked(pipe, latents, chunk_frames=8)
 
     elapsed = time.time() - start
