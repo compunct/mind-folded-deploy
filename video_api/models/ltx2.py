@@ -32,10 +32,10 @@ def load():
     )
 
     # Offload MUST happen before from_pipe() — frees enough RAM for it to succeed.
-    # Use model_cpu_offload (not sequential) — moves whole models at a time,
-    # much faster and far less bookkeeping overhead for hook swaps.
-    print("[LTX-2] Enabling model CPU offload (t2v)...")
-    t2v_pipe.enable_model_cpu_offload(device="cuda")
+    # Use sequential here (tighter RAM footprint) so from_pipe() can succeed.
+    # At generation time we swap to model_cpu_offload (faster, cheap hook swaps).
+    print("[LTX-2] Enabling sequential CPU offload (t2v)...")
+    t2v_pipe.enable_sequential_cpu_offload(device="cuda")
 
     # Decode VAE in chunks to avoid 32-bit tensor index overflow on long videos
     print("[LTX-2] Enabling VAE tiling for long video support...")
