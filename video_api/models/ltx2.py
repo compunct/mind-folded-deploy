@@ -31,9 +31,9 @@ def load():
         torch_dtype=torch.bfloat16,
     )
 
-    # Create i2v pipe before offload — shares model weights (zero extra RAM)
-    print("[LTX-2] Creating image-to-video pipeline (shared weights)...")
-    i2v_pipe = LTX2ImageToVideoPipeline.from_pipe(t2v_pipe)
+    # Offload MUST happen before from_pipe() — frees enough RAM for it to succeed
+    print("[LTX-2] Enabling sequential CPU offload (t2v)...")
+    t2v_pipe.enable_sequential_cpu_offload(device="cuda")
 
     # Decode VAE in chunks to avoid 32-bit tensor index overflow on long videos
     print("[LTX-2] Enabling VAE tiling for long video support...")
@@ -42,11 +42,10 @@ def load():
         tile_sample_stride_num_frames=8,
     )
 
-    # Enable offload on t2v only at load time (default pipeline).
-    # Offload hooks are pipeline-specific and can't coexist on shared models
-    # without OOM, so we swap hooks at generation time when switching pipelines.
-    print("[LTX-2] Enabling sequential CPU offload (t2v)...")
-    t2v_pipe.enable_sequential_cpu_offload(device="cuda")
+    # Create i2v pipe AFTER offload — shares model weights (zero extra RAM).
+    # Offload hooks are pipeline-specific so we swap them at generation time.
+    print("[LTX-2] Creating image-to-video pipeline (shared weights)...")
+    i2v_pipe = LTX2ImageToVideoPipeline.from_pipe(t2v_pipe)
 
     print("[LTX-2] Model loaded successfully.")
     return {"t2v": t2v_pipe, "i2v": i2v_pipe, "_active": "t2v"}
