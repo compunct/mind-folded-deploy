@@ -60,7 +60,7 @@ def load():
 
 def generate(pipe, prompt, height=720, width=1280, num_frames=289,
              fps=24, num_inference_steps=40, guidance_scale=4.0,
-             negative_prompt=None, seed=None):
+             negative_prompt=None, seed=None, **kwargs):
     """
     Generate video frames using the loaded WAN 2.2 pipeline.
 

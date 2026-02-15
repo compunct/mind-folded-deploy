@@ -104,6 +104,7 @@ class GenerateRequest(BaseModel):
     num_inference_steps: int = 40
     guidance_scale: float = 4.0
     seed: Optional[int] = None
+    image_base64: Optional[str] = None  # Base64-encoded image for img2vid
 
 
 class JobResponse(BaseModel):
@@ -194,16 +195,29 @@ def serve_video(filename: str):
 
 def _run_job(job_id: str):
     """Run video generation in a background thread."""
+    import base64
+    import io
+    from PIL import Image
+
     job = jobs[job_id]
     req = job["request"]
 
     entry = MODEL_REGISTRY[VIDEO_MODEL]
     generate_fn = _import_func(entry["generate"])
 
+    # Decode base64 image if provided
+    input_image = None
+    if req.image_base64:
+        image_bytes = base64.b64decode(req.image_base64)
+        input_image = Image.open(io.BytesIO(image_bytes))
+        print(f"[Server] Decoded input image: {input_image.size} {input_image.mode}")
+
+    mode = "img2vid" if input_image else "txt2vid"
+
     # Block until the GPU is free — job stays "queued" while waiting
     with generation_lock:
         job["status"] = "running"
-        print(f"[Server] Job {job_id} running: {req.prompt!r}")
+        print(f"[Server] Job {job_id} running ({mode}): {req.prompt!r}")
 
         try:
             frames, elapsed = generate_fn(
@@ -217,6 +231,7 @@ def _run_job(job_id: str):
                 guidance_scale=req.guidance_scale,
                 negative_prompt=req.negative_prompt,
                 seed=req.seed,
+                image=input_image,
             )
 
             filename = f"{uuid.uuid4().hex}.mp4"
@@ -230,6 +245,7 @@ def _run_job(job_id: str):
                 "generation_time_seconds": round(elapsed, 2),
                 "model": VIDEO_MODEL,
                 "parameters": {
+                    "mode": mode,
                     "prompt": req.prompt,
                     "height": req.height,
                     "width": req.width,

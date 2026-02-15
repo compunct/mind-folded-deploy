@@ -18,41 +18,45 @@ DEFAULT_NEGATIVE_PROMPT = (
 
 def load():
     """
-    Load the LTX-2 19B distilled pipeline.
+    Load the LTX-2 19B distilled pipeline (text-to-video + image-to-video).
 
     Returns:
-        Loaded diffusers LTX2Pipeline ready for generation.
+        Dict with "t2v" and "i2v" pipeline instances (shared weights, zero extra RAM).
     """
-    from diffusers import LTX2Pipeline
+    from diffusers import LTX2Pipeline, LTX2ImageToVideoPipeline
 
-    print("[LTX-2] Loading pipeline from HuggingFace...")
-    pipe = LTX2Pipeline.from_pretrained(
+    print("[LTX-2] Loading text-to-video pipeline from HuggingFace...")
+    t2v_pipe = LTX2Pipeline.from_pretrained(
         MODEL_ID,
         torch_dtype=torch.bfloat16,
     )
 
+    print("[LTX-2] Creating image-to-video pipeline (shared weights)...")
+    i2v_pipe = LTX2ImageToVideoPipeline.from_pipe(t2v_pipe)
+
     print("[LTX-2] Enabling sequential CPU offload...")
-    pipe.enable_sequential_cpu_offload(device="cuda")
+    t2v_pipe.enable_sequential_cpu_offload(device="cuda")
+    i2v_pipe.enable_sequential_cpu_offload(device="cuda")
 
     # Decode VAE in chunks to avoid 32-bit tensor index overflow on long videos
     print("[LTX-2] Enabling VAE tiling for long video support...")
-    pipe.vae.enable_tiling(
+    t2v_pipe.vae.enable_tiling(
         tile_sample_min_num_frames=16,
         tile_sample_stride_num_frames=8,
     )
 
     print("[LTX-2] Model loaded successfully.")
-    return pipe
+    return {"t2v": t2v_pipe, "i2v": i2v_pipe}
 
 
 def generate(pipe, prompt, height=512, width=768, num_frames=121,
              fps=24, num_inference_steps=8, guidance_scale=1.0,
-             negative_prompt=None, seed=None):
+             negative_prompt=None, seed=None, image=None):
     """
     Generate video frames using the loaded LTX-2 pipeline.
 
     Args:
-        pipe: Loaded LTX-2 pipeline
+        pipe: Dict with "t2v" and "i2v" pipeline instances
         prompt: Text prompt for generation
         height: Video height in pixels (divisible by 32)
         width: Video width in pixels (divisible by 32)
@@ -63,13 +67,14 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
         guidance_scale: Guidance scale (1.0 for distilled model)
         negative_prompt: Negative prompt (uses default if None)
         seed: Random seed for reproducibility
+        image: Optional PIL Image for image-to-video generation
 
     Returns:
         (frames, elapsed): List of PIL Image frames and generation time in seconds.
     """
     from diffusers.pipelines.ltx2.utils import DISTILLED_SIGMA_VALUES
     import numpy as np
-    from PIL import Image
+    from PIL import Image as PILImage
 
     if negative_prompt is None:
         negative_prompt = DEFAULT_NEGATIVE_PROMPT
@@ -87,19 +92,30 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
         width = (width // 32) * 32
         print(f"[LTX-2] Adjusted width to {width} (must be divisible by 32)")
 
+    # Select pipeline: image-to-video or text-to-video
+    if image is not None:
+        active_pipe = pipe["i2v"]
+        mode = "img2vid"
+        # Resize image to target resolution
+        image = image.convert("RGB").resize((width, height), PILImage.LANCZOS)
+        print(f"[LTX-2] Image resized to {width}x{height}")
+    else:
+        active_pipe = pipe["t2v"]
+        mode = "txt2vid"
+
     generator = None
     if seed is not None:
         generator = torch.Generator(device="cpu").manual_seed(seed)
 
-    print(f"[LTX-2] Generating: {width}x{height}, {num_frames} frames, "
+    print(f"[LTX-2] Generating ({mode}): {width}x{height}, {num_frames} frames, "
           f"{num_inference_steps} steps, guidance={guidance_scale}")
 
     # Use pipeline's built-in decode for short videos (< 750 frames),
     # chunked latent decode only for long videos that exceed 32-bit index limit.
     use_chunked = num_frames > 750
 
-    start = time.time()
-    result, audio = pipe(
+    # Build common kwargs
+    pipe_kwargs = dict(
         prompt=prompt,
         negative_prompt=negative_prompt,
         width=width,
@@ -113,20 +129,25 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
         output_type="latent" if use_chunked else "np",
         return_dict=False,
     )
+    if image is not None:
+        pipe_kwargs["image"] = image
+
+    start = time.time()
+    result, audio = active_pipe(**pipe_kwargs)
     diff_elapsed = time.time() - start
 
     if use_chunked:
         print(f"[LTX-2] Diffusion complete in {diff_elapsed:.1f}s, chunked decode...")
         latents = result
         if latents.ndim == 3:
-            latents = pipe._unpack_latents(latents, num_frames, height, width)
-        latents = latents.to(pipe.vae.dtype)
-        frames = _decode_latents_chunked(pipe, latents, chunk_frames=8)
+            latents = active_pipe._unpack_latents(latents, num_frames, height, width)
+        latents = latents.to(active_pipe.vae.dtype)
+        frames = _decode_latents_chunked(active_pipe, latents, chunk_frames=8)
     else:
         print(f"[LTX-2] Generation complete in {diff_elapsed:.1f}s")
         video_np = result[0]
         video_uint8 = (video_np * 255).clip(0, 255).astype(np.uint8)
-        frames = [Image.fromarray(frame) for frame in video_uint8]
+        frames = [PILImage.fromarray(frame) for frame in video_uint8]
 
     elapsed = time.time() - start
     print(f"[LTX-2] Total: {elapsed:.1f}s ({len(frames)} frames)")
