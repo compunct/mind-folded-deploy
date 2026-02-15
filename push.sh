@@ -22,32 +22,32 @@ TARGET="${1:-}"
 case "$TARGET" in
     ltx)
         echo "Building compunct/video-api:ltx2 ..."
-        docker build -t compunct/video-api:ltx2 -f video_api/Dockerfile.ltx2 video_api/
+        docker build -t compunct/video-api:ltx2 -f ltx/video_api/Dockerfile ltx/video_api/
         echo "Pushing compunct/video-api:ltx2 ..."
         docker push compunct/video-api:ltx2
         ;;
     ltx-base)
         echo "Building compunct/video-api-base:ltx2 ..."
-        docker build -t compunct/video-api-base:ltx2 -f video_api/Dockerfile.ltx2-base video_api/
+        docker build -t compunct/video-api-base:ltx2 -f ltx/video_api/Dockerfile.base ltx/video_api/
         echo "Pushing compunct/video-api-base:ltx2 ..."
         docker push compunct/video-api-base:ltx2
         ;;
     wan)
         echo "Building compunct/video-api:wan22 ..."
-        docker build -t compunct/video-api:wan22 -t compunct/video-api:latest -f video_api/Dockerfile.wan22 video_api/
+        docker build -t compunct/video-api:wan22 -t compunct/video-api:latest -f wan/video_api/Dockerfile wan/video_api/
         echo "Pushing compunct/video-api:wan22 ..."
         docker push compunct/video-api:wan22
         docker push compunct/video-api:latest
         ;;
     wan-base)
         echo "Building compunct/video-api-base:wan22 ..."
-        docker build -t compunct/video-api-base:wan22 -f video_api/Dockerfile.wan22-base video_api/
+        docker build -t compunct/video-api-base:wan22 -f wan/video_api/Dockerfile.base wan/video_api/
         echo "Pushing compunct/video-api-base:wan22 ..."
         docker push compunct/video-api-base:wan22
         ;;
     runpod)
         echo "Building compunct/video-api:runpod ..."
-        docker build -t compunct/video-api:runpod -f video_api/Dockerfile.runpod video_api/
+        docker build -t compunct/video-api:runpod -f ltx/video_api/Dockerfile.runpod ltx/video_api/
         echo "Pushing compunct/video-api:runpod ..."
         docker push compunct/video-api:runpod
         ;;

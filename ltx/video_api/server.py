@@ -1,9 +1,7 @@
 """
-Local video generation FastAPI server.
+LTX-2 video generation FastAPI server.
 
-Pluggable model backend selected via VIDEO_MODEL environment variable.
-Loads the model into GPU memory once at startup and serves generation requests.
-
+Loads the LTX-2 19B Distilled model at startup and serves generation requests.
 Jobs are processed asynchronously — POST /generate returns immediately with a
 job_id, and clients poll GET /jobs/{job_id} for status.
 """
@@ -19,28 +17,15 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from video_api.models.ltx2 import load, generate
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-VIDEO_MODEL = os.environ.get("VIDEO_MODEL", "wan2.2-14b")
+MODEL_NAME = "ltx2-distilled"
 OUTPUT_DIR = Path("/app/outputs")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-# ---------------------------------------------------------------------------
-# Model registry
-# ---------------------------------------------------------------------------
-
-MODEL_REGISTRY = {
-    "wan2.2-14b": {
-        "load": "video_api.models.wan22:load",
-        "generate": "video_api.models.wan22:generate",
-    },
-    "ltx2-distilled": {
-        "load": "video_api.models.ltx2:load",
-        "generate": "video_api.models.ltx2:generate",
-    },
-}
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -53,14 +38,6 @@ generation_lock = threading.Lock()
 jobs = {}  # job_id -> {status, result, error, request, created_at}
 
 
-def _import_func(dotted_path: str):
-    """Import a function from 'module.path:func_name' notation."""
-    module_path, func_name = dotted_path.rsplit(":", 1)
-    import importlib
-    module = importlib.import_module(module_path)
-    return getattr(module, func_name)
-
-
 # ---------------------------------------------------------------------------
 # Startup
 # ---------------------------------------------------------------------------
@@ -69,21 +46,11 @@ def _import_func(dotted_path: str):
 def load_model():
     global pipe, model_status
 
-    if VIDEO_MODEL not in MODEL_REGISTRY:
-        supported = ", ".join(MODEL_REGISTRY.keys())
-        print(f"[Server] ERROR: Unknown model '{VIDEO_MODEL}'. Supported: {supported}")
-        print(f"[Server] Starting in placeholder mode — /generate will return errors.")
-        model_status = "error"
-        return
-
-    entry = MODEL_REGISTRY[VIDEO_MODEL]
-    load_fn = _import_func(entry["load"])
-
-    print(f"[Server] Loading model: {VIDEO_MODEL}")
+    print(f"[Server] Loading model: {MODEL_NAME}")
     try:
-        pipe = load_fn()
+        pipe = load()
         model_status = "ready"
-        print(f"[Server] Model '{VIDEO_MODEL}' loaded and ready.")
+        print(f"[Server] Model '{MODEL_NAME}' loaded and ready.")
     except Exception as e:
         model_status = "error"
         print(f"[Server] Failed to load model: {e}")
@@ -97,12 +64,12 @@ def load_model():
 class GenerateRequest(BaseModel):
     prompt: str
     negative_prompt: Optional[str] = None
-    height: int = 720
-    width: int = 1280
-    num_frames: int = 289  # 12s at 24fps
+    height: int = 512
+    width: int = 768
+    num_frames: int = 121  # ~5s at 24fps
     fps: int = 24
-    num_inference_steps: int = 40
-    guidance_scale: float = 4.0
+    num_inference_steps: int = 8
+    guidance_scale: float = 1.0
     seed: Optional[int] = None
     image_base64: Optional[str] = None  # Base64-encoded image for img2vid
 
@@ -134,7 +101,7 @@ class HealthResponse(BaseModel):
 
 @app.get("/health", response_model=HealthResponse)
 def health():
-    return HealthResponse(status=model_status, model=VIDEO_MODEL)
+    return HealthResponse(status=model_status, model=MODEL_NAME)
 
 
 @app.post("/generate", response_model=JobResponse)
@@ -202,9 +169,6 @@ def _run_job(job_id: str):
     job = jobs[job_id]
     req = job["request"]
 
-    entry = MODEL_REGISTRY[VIDEO_MODEL]
-    generate_fn = _import_func(entry["generate"])
-
     # Decode base64 image if provided
     input_image = None
     if req.image_base64:
@@ -220,7 +184,7 @@ def _run_job(job_id: str):
         print(f"[Server] Job {job_id} running ({mode}): {req.prompt!r}")
 
         try:
-            frames, elapsed = generate_fn(
+            frames, elapsed = generate(
                 pipe,
                 prompt=req.prompt,
                 height=req.height,
@@ -243,7 +207,7 @@ def _run_job(job_id: str):
                 "video_url": f"/videos/{filename}",
                 "filename": filename,
                 "generation_time_seconds": round(elapsed, 2),
-                "model": VIDEO_MODEL,
+                "model": MODEL_NAME,
                 "parameters": {
                     "mode": mode,
                     "prompt": req.prompt,

@@ -23,9 +23,9 @@ RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 &
 WORKDIR /app
 
 # Install pip via ensurepip and install Python dependencies
-COPY requirements.ltx2.txt .
+COPY requirements.txt .
 RUN python -m ensurepip --upgrade && \
     python -m pip install --no-cache-dir --upgrade pip && \
-    python -m pip install --no-cache-dir -r requirements.ltx2.txt
+    python -m pip install --no-cache-dir -r requirements.txt
 
 RUN mkdir -p /app/outputs

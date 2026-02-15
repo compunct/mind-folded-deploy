@@ -1,8 +1,8 @@
 services:
   video-api-wan:
     build:
-      context: ./video_api
-      dockerfile: Dockerfile.wan22
+      context: ./wan/video_api
+      dockerfile: Dockerfile
     profiles: ["wan"]
     volumes:
       - model_cache:/app/model_cache
@@ -30,8 +30,8 @@ services:
   video-api-ltx:
     image: compunct/video-api:ltx2
     build:
-      context: ./video_api
-      dockerfile: Dockerfile.ltx2
+      context: ./ltx/video_api
+      dockerfile: Dockerfile
     profiles: ["ltx"]
     volumes:
       - model_cache:/app/model_cache

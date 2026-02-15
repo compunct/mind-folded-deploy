@@ -10,3 +10,5 @@ safetensors
 imageio
 imageio-ffmpeg
 optimum-quanto
+pillow
+numpy
