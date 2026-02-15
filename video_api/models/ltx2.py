@@ -31,12 +31,8 @@ def load():
         torch_dtype=torch.bfloat16,
     )
 
-    print("[LTX-2] Creating image-to-video pipeline (shared weights)...")
-    i2v_pipe = LTX2ImageToVideoPipeline.from_pipe(t2v_pipe)
-
     print("[LTX-2] Enabling sequential CPU offload...")
     t2v_pipe.enable_sequential_cpu_offload(device="cuda")
-    i2v_pipe.enable_sequential_cpu_offload(device="cuda")
 
     # Decode VAE in chunks to avoid 32-bit tensor index overflow on long videos
     print("[LTX-2] Enabling VAE tiling for long video support...")
@@ -44,6 +40,10 @@ def load():
         tile_sample_min_num_frames=16,
         tile_sample_stride_num_frames=8,
     )
+
+    # Create i2v pipe AFTER offload — shares same model objects + hooks
+    print("[LTX-2] Creating image-to-video pipeline (shared weights)...")
+    i2v_pipe = LTX2ImageToVideoPipeline.from_pipe(t2v_pipe)
 
     print("[LTX-2] Model loaded successfully.")
     return {"t2v": t2v_pipe, "i2v": i2v_pipe}
