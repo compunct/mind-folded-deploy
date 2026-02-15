@@ -273,7 +273,8 @@ def _export_frames_to_mp4(frames, output_path: Path, fps: int):
     import numpy as np
 
     writer = imageio.get_writer(str(output_path), fps=fps, codec="libx264",
-                                output_params=["-pix_fmt", "yuv420p"])
+                                output_params=["-pix_fmt", "yuv420p",
+                                               "-crf", "18"])
     for frame in frames:
         if hasattr(frame, "numpy"):
             # torch tensor

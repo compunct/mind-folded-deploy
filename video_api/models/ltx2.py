@@ -140,7 +140,7 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
         pipe_kwargs["image"] = image
         # Add noise to image conditioning so the model has room to create motion.
         # Without this (default 0.0), early frames are static copies of the input.
-        pipe_kwargs["noise_scale"] = 0.06
+        pipe_kwargs["noise_scale"] = 0.1
 
     start = time.time()
     result, audio = active_pipe(**pipe_kwargs)
