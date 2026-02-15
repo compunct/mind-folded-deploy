@@ -121,6 +121,16 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
     # chunked latent decode only for long videos that exceed 32-bit index limit.
     use_chunked = num_frames > 750
 
+    # For i2v, use more inference steps and default scheduler instead of
+    # distilled sigmas — the 8-step distilled schedule is tuned for t2v and
+    # doesn't reliably produce temporal coherence for image-to-video.
+    if image is not None:
+        actual_steps = 30
+        actual_sigmas = None  # use default scheduler
+    else:
+        actual_steps = num_inference_steps
+        actual_sigmas = DISTILLED_SIGMA_VALUES
+
     # Build common kwargs
     pipe_kwargs = dict(
         prompt=prompt,
@@ -129,13 +139,14 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
         height=height,
         num_frames=num_frames,
         frame_rate=float(fps),
-        num_inference_steps=num_inference_steps,
-        sigmas=DISTILLED_SIGMA_VALUES,
+        num_inference_steps=actual_steps,
         guidance_scale=guidance_scale,
         generator=generator,
         output_type="latent" if use_chunked else "np",
         return_dict=False,
     )
+    if actual_sigmas is not None:
+        pipe_kwargs["sigmas"] = actual_sigmas
     if image is not None:
         pipe_kwargs["image"] = image
         # Add noise to image conditioning so the model has room to create motion.
