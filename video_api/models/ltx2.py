@@ -32,8 +32,8 @@ def load():
     )
 
     # Offload MUST happen before from_pipe() — frees enough RAM for it to succeed.
-    # Use sequential here (tighter RAM footprint) so from_pipe() can succeed.
-    # At generation time we swap to model_cpu_offload (faster, cheap hook swaps).
+    # Sequential offload hooks are registered on the module objects themselves,
+    # so they fire for both t2v and i2v (shared via from_pipe). No swap needed.
     print("[LTX-2] Enabling sequential CPU offload (t2v)...")
     t2v_pipe.enable_sequential_cpu_offload(device="cuda")
 
@@ -45,12 +45,13 @@ def load():
     )
 
     # Create i2v pipe AFTER offload — shares model weights (zero extra RAM).
-    # Offload hooks are pipeline-specific so we swap them at generation time.
+    # The sequential offload hooks live on the shared module objects, so both
+    # pipelines use them automatically. No runtime hook swapping needed.
     print("[LTX-2] Creating image-to-video pipeline (shared weights)...")
     i2v_pipe = LTX2ImageToVideoPipeline.from_pipe(t2v_pipe)
 
     print("[LTX-2] Model loaded successfully.")
-    return {"t2v": t2v_pipe, "i2v": i2v_pipe, "_active": "t2v"}
+    return {"t2v": t2v_pipe, "i2v": i2v_pipe}
 
 
 def generate(pipe, prompt, height=512, width=768, num_frames=121,
@@ -106,18 +107,6 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
     else:
         active_key = "t2v"
         mode = "txt2vid"
-
-    # Swap offload hooks if switching pipelines.
-    # model_cpu_offload has minimal bookkeeping (~5 hooks), so swaps are cheap.
-    if pipe.get("_active") != active_key:
-        import gc
-        old_key = pipe["_active"]
-        print(f"[LTX-2] Switching offload: {old_key} -> {active_key}")
-        pipe[old_key].remove_all_hooks()
-        gc.collect()
-        torch.cuda.empty_cache()
-        pipe[active_key].enable_model_cpu_offload(device="cuda")
-        pipe["_active"] = active_key
 
     active_pipe = pipe[active_key]
 
