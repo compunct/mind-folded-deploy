@@ -31,9 +31,11 @@ def load():
         torch_dtype=torch.bfloat16,
     )
 
-    # Offload MUST happen before from_pipe() — frees enough RAM for it to succeed
-    print("[LTX-2] Enabling sequential CPU offload (t2v)...")
-    t2v_pipe.enable_sequential_cpu_offload(device="cuda")
+    # Offload MUST happen before from_pipe() — frees enough RAM for it to succeed.
+    # Use model_cpu_offload (not sequential) — moves whole models at a time,
+    # much faster and far less bookkeeping overhead for hook swaps.
+    print("[LTX-2] Enabling model CPU offload (t2v)...")
+    t2v_pipe.enable_model_cpu_offload(device="cuda")
 
     # Decode VAE in chunks to avoid 32-bit tensor index overflow on long videos
     print("[LTX-2] Enabling VAE tiling for long video support...")
@@ -105,12 +107,16 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
         active_key = "t2v"
         mode = "txt2vid"
 
-    # Swap offload hooks if switching pipelines (can't have both at once — OOM)
+    # Swap offload hooks if switching pipelines.
+    # model_cpu_offload has minimal bookkeeping (~5 hooks), so swaps are cheap.
     if pipe.get("_active") != active_key:
+        import gc
         old_key = pipe["_active"]
         print(f"[LTX-2] Switching offload: {old_key} -> {active_key}")
         pipe[old_key].remove_all_hooks()
-        pipe[active_key].enable_sequential_cpu_offload(device="cuda")
+        gc.collect()
+        torch.cuda.empty_cache()
+        pipe[active_key].enable_model_cpu_offload(device="cuda")
         pipe["_active"] = active_key
 
     active_pipe = pipe[active_key]
@@ -143,6 +149,9 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
     )
     if image is not None:
         pipe_kwargs["image"] = image
+        # Add noise to image conditioning so the model has room to create motion.
+        # Without this (default 0.0), early frames are static copies of the input.
+        pipe_kwargs["noise_scale"] = 0.04
 
     start = time.time()
     result, audio = active_pipe(**pipe_kwargs)
