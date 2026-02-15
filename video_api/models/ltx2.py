@@ -31,8 +31,9 @@ def load():
         torch_dtype=torch.bfloat16,
     )
 
-    print("[LTX-2] Enabling sequential CPU offload...")
-    t2v_pipe.enable_sequential_cpu_offload(device="cuda")
+    # Create i2v pipe before offload — shares model weights (zero extra RAM)
+    print("[LTX-2] Creating image-to-video pipeline (shared weights)...")
+    i2v_pipe = LTX2ImageToVideoPipeline.from_pipe(t2v_pipe)
 
     # Decode VAE in chunks to avoid 32-bit tensor index overflow on long videos
     print("[LTX-2] Enabling VAE tiling for long video support...")
@@ -41,16 +42,14 @@ def load():
         tile_sample_stride_num_frames=8,
     )
 
-    # Create i2v pipe from t2v — shares model weights (zero extra RAM)
-    # but offload hooks must be reapplied per diffusers docs
-    print("[LTX-2] Creating image-to-video pipeline (shared weights)...")
-    i2v_pipe = LTX2ImageToVideoPipeline.from_pipe(t2v_pipe)
-
-    print("[LTX-2] Enabling sequential CPU offload on i2v pipeline...")
-    i2v_pipe.enable_sequential_cpu_offload(device="cuda")
+    # Enable offload on t2v only at load time (default pipeline).
+    # Offload hooks are pipeline-specific and can't coexist on shared models
+    # without OOM, so we swap hooks at generation time when switching pipelines.
+    print("[LTX-2] Enabling sequential CPU offload (t2v)...")
+    t2v_pipe.enable_sequential_cpu_offload(device="cuda")
 
     print("[LTX-2] Model loaded successfully.")
-    return {"t2v": t2v_pipe, "i2v": i2v_pipe}
+    return {"t2v": t2v_pipe, "i2v": i2v_pipe, "_active": "t2v"}
 
 
 def generate(pipe, prompt, height=512, width=768, num_frames=121,
@@ -98,14 +97,24 @@ def generate(pipe, prompt, height=512, width=768, num_frames=121,
 
     # Select pipeline: image-to-video or text-to-video
     if image is not None:
-        active_pipe = pipe["i2v"]
+        active_key = "i2v"
         mode = "img2vid"
         # Resize image to target resolution
         image = image.convert("RGB").resize((width, height), PILImage.LANCZOS)
         print(f"[LTX-2] Image resized to {width}x{height}")
     else:
-        active_pipe = pipe["t2v"]
+        active_key = "t2v"
         mode = "txt2vid"
+
+    # Swap offload hooks if switching pipelines (can't have both at once — OOM)
+    if pipe.get("_active") != active_key:
+        old_key = pipe["_active"]
+        print(f"[LTX-2] Switching offload: {old_key} -> {active_key}")
+        pipe[old_key].remove_all_hooks()
+        pipe[active_key].enable_sequential_cpu_offload(device="cuda")
+        pipe["_active"] = active_key
+
+    active_pipe = pipe[active_key]
 
     generator = None
     if seed is not None:
