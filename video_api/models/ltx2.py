@@ -41,9 +41,13 @@ def load():
         tile_sample_stride_num_frames=8,
     )
 
-    # Create i2v pipe AFTER offload — shares same model objects + hooks
+    # Create i2v pipe from t2v — shares model weights (zero extra RAM)
+    # but offload hooks must be reapplied per diffusers docs
     print("[LTX-2] Creating image-to-video pipeline (shared weights)...")
     i2v_pipe = LTX2ImageToVideoPipeline.from_pipe(t2v_pipe)
+
+    print("[LTX-2] Enabling sequential CPU offload on i2v pipeline...")
+    i2v_pipe.enable_sequential_cpu_offload(device="cuda")
 
     print("[LTX-2] Model loaded successfully.")
     return {"t2v": t2v_pipe, "i2v": i2v_pipe}
