@@ -29,7 +29,6 @@ def load():
         Dict with "t2v" and "i2v" pipeline instances.
     """
     from diffusers import AutoencoderKLWan, WanPipeline, WanImageToVideoPipeline
-    from transformers import CLIPVisionModel
 
     # --- Shared components ---
     print("[WAN 2.2] Loading shared VAE (float32)...")
@@ -57,17 +56,11 @@ def load():
     t2v_pipe.enable_model_cpu_offload()
 
     # --- Image-to-video pipeline ---
+    # Let the pipeline load its own image_encoder from the I2V repo
     print("[WAN 2.2] Loading I2V pipeline...")
-    image_encoder = CLIPVisionModel.from_pretrained(
-        I2V_MODEL_ID,
-        subfolder="image_encoder",
-        torch_dtype=torch.float32,
-    )
-
     i2v_pipe = WanImageToVideoPipeline.from_pretrained(
         I2V_MODEL_ID,
         vae=vae,
-        image_encoder=image_encoder,
         torch_dtype=torch.bfloat16,
     )
 
