@@ -70,8 +70,8 @@ def load():
         compute_dtype=torch.bfloat16,
     )
 
-    print("[WAN 2.2] I2V: enabling model CPU offload...")
-    i2v_pipe.enable_model_cpu_offload()
+    print("[WAN 2.2] I2V: enabling sequential CPU offload...")
+    i2v_pipe.enable_sequential_cpu_offload()
 
     print("[WAN 2.2] Both pipelines loaded successfully.")
     return {"t2v": t2v_pipe, "i2v": i2v_pipe}
